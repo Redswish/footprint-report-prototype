@@ -33,6 +33,24 @@ import type {
 
 type ChatStatus = "submitted" | "streaming" | "ready" | "error"
 
+// A pending askSlider/askTiles call means a widget is on screen waiting for the
+// user's answer. Sending a plain-text message before it resolves leaves that tool
+// call without a result, which the model can't recover from (AI_MissingToolResultsError)
+// — so the input has to stay disabled until the widget is answered.
+function hasPendingWidget(messages: AppUIMessage[]): boolean {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    for (const part of messages[i].parts) {
+      if (
+        (part.type === "tool-askSlider" || part.type === "tool-askTiles") &&
+        part.state === "input-available"
+      ) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
 export function ChatPanel({
   messages,
   status,
@@ -45,7 +63,8 @@ export function ChatPanel({
   addToolOutput: ChatAddToolOutputFunction<AppUIMessage>
 }) {
   const [input, setInput] = useState("")
-  const isBusy = status === "submitted" || status === "streaming"
+  const pendingWidget = hasPendingWidget(messages)
+  const isBusy = status === "submitted" || status === "streaming" || pendingWidget
 
   function handleSubmit(e?: React.FormEvent) {
     e?.preventDefault()
@@ -102,7 +121,11 @@ export function ChatPanel({
       >
         <InputGroup>
           <InputGroupTextarea
-            placeholder="Say anything — I'll steer us back on track."
+            placeholder={
+              pendingWidget
+                ? "Answer above to continue…"
+                : "Say anything — I'll steer us back on track."
+            }
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -111,6 +134,7 @@ export function ChatPanel({
                 handleSubmit()
               }
             }}
+            disabled={pendingWidget}
             className="min-h-16"
           />
           <InputGroupAddon align="block-end">
