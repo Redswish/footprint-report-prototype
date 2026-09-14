@@ -16,10 +16,32 @@ export const runtime = "nodejs"
 export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json()
 
+  const modelMessages = await convertToModelMessages(messages)
+
+  // Cache everything up to the newest user turn so the growing conversation
+  // history (loaded skills, prior answers) is reused instead of rebilled
+  // on every request. Anthropic caches the full prefix up to a breakpoint,
+  // so this one breakpoint also covers the tools/system prefix below.
+  const cacheBoundary = modelMessages.length - 2
+  if (cacheBoundary >= 0) {
+    const message = modelMessages[cacheBoundary]
+    modelMessages[cacheBoundary] = {
+      ...message,
+      providerOptions: {
+        ...message.providerOptions,
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      },
+    }
+  }
+
   const result = streamText({
-    model: anthropic("claude-sonnet-5"),
-    instructions: buildOrchestratorPrompt(listSkills()),
-    messages: await convertToModelMessages(messages),
+    model: anthropic("claude-haiku-4-5"),
+    instructions: {
+      role: "system",
+      content: buildOrchestratorPrompt(listSkills()),
+      providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+    },
+    messages: modelMessages,
     tools,
     stopWhen: stepCountIs(8),
   })
